@@ -659,204 +659,251 @@ const ICONS = {
 };
 
 /* ============================= UTILIDADES DE CIFRADO ============================= */
+/* ============================= MOTOR CRIPTOGRÁFICO REVISADO ============================= */
+const ALFABETO_ES = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const ALFABETO_EN = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+function mod(n,m){ return ((n%m)+m)%m; }
+function restaurarAcento(original, nuevo){
+  const lower=original===original.toLowerCase();
+  const mapa={'á':'a','é':'e','í':'i','ó':'o','ú':'u','ü':'u','Á':'A','É':'E','Í':'I','Ó':'O','Ú':'U','Ü':'U'};
+  const base=mapa[original] || original;
+  if(base!==original && nuevo.toLowerCase()===base.toLowerCase()){
+    const ac={'a':'á','e':'é','i':'í','o':'ó','u':'ú'}[nuevo.toLowerCase()] || nuevo;
+    return lower?ac:ac.toUpperCase();
+  }
+  return lower?nuevo.toLowerCase():nuevo;
+}
 function caesarChar(ch, shift){
-  const code = ch.charCodeAt(0);
-  if(code>=65&&code<=90) return String.fromCharCode(((code-65+shift)%26+26)%26+65);
-  if(code>=97&&code<=122) return String.fromCharCode(((code-97+shift)%26+26)%26+97);
+  const upper=ch.toUpperCase();
+  const idx=ALFABETO_ES.indexOf(upper);
+  if(idx!==-1){
+    const out=ALFABETO_ES[mod(idx+shift,ALFABETO_ES.length)];
+    return ch===ch.toLowerCase()?out.toLowerCase():out;
+  }
+  const baseMap={'á':'a','é':'e','í':'i','ó':'o','ú':'u','ü':'u','Á':'A','É':'E','Í':'I','Ó':'O','Ú':'U','Ü':'U'};
+  if(baseMap[ch]) return ch;
+  const base=ch; const baseUpper=base.toUpperCase(); const idxEn=ALFABETO_EN.indexOf(baseUpper);
+  if(idxEn!==-1){ const out=ALFABETO_EN[mod(idxEn+shift,26)]; return restaurarAcento(ch,out); }
   return ch;
 }
 function caesarText(text, shift){ return [...text].map(c=>caesarChar(c,shift)).join(''); }
+function rot13Text(text){ return [...text].map(ch=>{const c=ch.charCodeAt(0);if(c>=65&&c<=90)return String.fromCharCode((c-65+13)%26+65);if(c>=97&&c<=122)return String.fromCharCode((c-97+13)%26+97);return ch;}).join(''); }
 
 function atbashChar(ch){
-  const code = ch.charCodeAt(0);
-  if(code>=65&&code<=90) return String.fromCharCode(90-(code-65));
-  if(code>=97&&code<=122) return String.fromCharCode(122-(code-97));
+  const upper=ch.toUpperCase();
+  const idx=ALFABETO_ES.indexOf(upper);
+  if(idx!==-1){ const out=ALFABETO_ES[ALFABETO_ES.length-1-idx]; return ch===ch.toLowerCase()?out.toLowerCase():out; }
+  const baseMap={'á':'a','é':'e','í':'i','ó':'o','ú':'u','ü':'u','Á':'A','É':'E','Í':'I','Ó':'O','Ú':'U','Ü':'U'};
+  if(baseMap[ch]) return ch;
+  const base=ch; const idxEn=ALFABETO_EN.indexOf(base.toUpperCase());
+  if(idxEn!==-1){ const out=ALFABETO_EN[25-idxEn]; return restaurarAcento(ch,out); }
   return ch;
 }
 function atbashText(text){ return [...text].map(atbashChar).join(''); }
 
-function vigenere(text, key, decode){
-  key = (key||'').replace(/[^a-zA-Z]/g,'').toUpperCase();
-  if(!key) throw new Error('Se necesita una clave alfabética (solo letras A-Z).');
-  let ki=0, out='';
+function vigenere(text,key,decode){
+  key=(key||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-ZñÑ]/g,'').toUpperCase();
+  if(!key) throw new Error('Se necesita una clave alfabética.');
+  let ki=0,out='';
   for(const ch of text){
-    const code = ch.charCodeAt(0);
-    let base=null;
-    if(code>=65&&code<=90) base=65;
-    else if(code>=97&&code<=122) base=97;
-    if(base!==null){
-      const k = key.charCodeAt(ki%key.length)-65;
-      const shift = decode? -k : k;
-      out += String.fromCharCode(((code-base+shift)%26+26)%26+base);
+    const upper=ch.toUpperCase();
+    const idx=ALFABETO_ES.indexOf(upper);
+    if(idx!==-1){
+      const k=ALFABETO_ES.indexOf(key[ki%key.length]);
+      const shift=decode?-k:k;
+      const r=ALFABETO_ES[mod(idx+shift,ALFABETO_ES.length)];
+      out+=ch===ch.toLowerCase()?r.toLowerCase():r;
       ki++;
-    } else out += ch;
+    }else out+=ch;
   }
   return out;
 }
 
-function base64Encode(t){ return btoa(unescape(encodeURIComponent(t))); }
+function base64Encode(t){
+  const bytes=new TextEncoder().encode(t);
+  let bin=''; for(const b of bytes) bin+=String.fromCharCode(b);
+  return btoa(bin);
+}
 function base64Decode(t){
-  try{ return decodeURIComponent(escape(atob(t.trim()))); }
-  catch(e){ throw new Error('Base64 inválido: revisá que el texto esté bien codificado.'); }
+  const clean=t.replace(/\s+/g,'');
+  if(!/^[A-Za-z0-9+/]*={0,2}$/.test(clean) || clean.length%4===1) throw new Error('Base64 inválido.');
+  try{
+    const bin=atob(clean); const bytes=Uint8Array.from(bin,c=>c.charCodeAt(0));
+    return new TextDecoder('utf-8',{fatal:true}).decode(bytes);
+  }catch(e){ throw new Error('Base64 inválido o no contiene texto UTF-8 válido.'); }
 }
 
 function textToHex(t){
   return Array.from(new TextEncoder().encode(t)).map(b=>b.toString(16).padStart(2,'0')).join(' ');
 }
 function hexToText(h){
-  const clean = h.replace(/\s+/g,'');
-  if(!clean.length || clean.length%2!==0 || /[^0-9a-fA-F]/.test(clean)) throw new Error('Hex inválido: debe tener un número par de dígitos hexadecimales.');
-  const bytes=[];
-  for(let i=0;i<clean.length;i+=2) bytes.push(parseInt(clean.substr(i,2),16));
-  return new TextDecoder().decode(new Uint8Array(bytes));
+  const clean=h.replace(/\s+/g,'');
+  if(!clean.length || clean.length%2!==0 || /[^0-9a-fA-F]/.test(clean)) throw new Error('Hex inválido: debe contener pares hexadecimales.');
+  const bytes=new Uint8Array(clean.length/2);
+  for(let i=0;i<clean.length;i+=2) bytes[i/2]=parseInt(clean.slice(i,i+2),16);
+  try{return new TextDecoder('utf-8',{fatal:true}).decode(bytes);}
+  catch(e){throw new Error('Los bytes hexadecimales no forman texto UTF-8 válido.');}
 }
 
-const MORSE_MAP = { A:'.-',B:'-...',C:'-.-.',D:'-..',E:'.',F:'..-.',G:'--.',H:'....',I:'..',J:'.---',K:'-.-',L:'.-..',M:'--',N:'-.',O:'---',P:'.--.',Q:'--.-',R:'.-.',S:'...',T:'-',U:'..-',V:'...-',W:'.--',X:'-..-',Y:'-.--',Z:'--..','0':'-----','1':'.----','2':'..---','3':'...--','4':'....-','5':'.....','6':'-....','7':'--...','8':'---..','9':'----.','.':'.-.-.-',',':'--..--','?':'..--..' };
-const MORSE_REV = Object.fromEntries(Object.entries(MORSE_MAP).map(([k,v])=>[v,k]));
+const MORSE_MAP={
+  A:'.-',B:'-...',C:'-.-.',D:'-..',E:'.',F:'..-.',G:'--.',H:'....',I:'..',J:'.---',K:'-.-',L:'.-..',M:'--',N:'-.',Ñ:'--.--',O:'---',P:'.--.',Q:'--.-',R:'.-.',S:'...',T:'-',U:'..-',V:'...-',W:'.--',X:'-..-',Y:'-.--',Z:'--..',
+  '0':'-----','1':'.----','2':'..---','3':'...--','4':'....-','5':'.....','6':'-....','7':'--...','8':'---..','9':'----.', '.':'.-.-.-',',':'--..--','?':'..--..','!':'-.-.--','/':'-..-.','(':'-.--.',')': '-.--.-',':':'---...',';':'-.-.-.','-':'-....-','_':'..--.-','"':'.-..-.','@':'.--.-.'
+};
+const MORSE_REV=Object.fromEntries(Object.entries(MORSE_MAP).map(([k,v])=>[v,k]));
+function normalizarMorse(ch){
+  if(ch==='ñ'||ch==='Ñ') return 'Ñ';
+  return ch.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+}
 function morseEncode(t){
-  const out = [...t.toUpperCase()].map(ch=>{
-    if(ch===' ') return '/';
-    return MORSE_MAP[ch] || null;
-  }).filter(x=>x!==null);
-  if(!out.length) throw new Error('No hay caracteres compatibles con Morse (A-Z, 0-9, . , ?).');
-  return out.join(' ');
+  return [...t].map(ch=>{
+    if(/\s/.test(ch)) return '/';
+    const c=normalizarMorse(ch);
+    if(!MORSE_MAP[c]) throw new Error(`Carácter no compatible con Morse: ${ch}`);
+    return MORSE_MAP[c];
+  }).join(' ');
 }
 function morseDecode(code){
-  return code.trim().split(/\s+/).map(sym=>{
-    if(sym==='/') return ' ';
-    return MORSE_REV[sym] !== undefined ? MORSE_REV[sym] : '?';
-  }).join('');
+  const tokens=code.trim().split(/\s+/); let out='';
+  for(const sym of tokens){
+    if(sym==='/'){out+=' ';continue;}
+    if(!MORSE_REV[sym]) throw new Error(`Código Morse inválido: ${sym}`);
+    out+=MORSE_REV[sym];
+  }
+  return out;
 }
 
-function railFenceEncode(text, keyStr){
-  const rails = parseInt(keyStr);
-  if(!rails || rails<2) throw new Error('El número de rieles debe ser un entero de 2 o más.');
-  const fence = Array.from({length:rails},()=>[]);
-  let rail=0, dir=1;
-  for(const ch of text){
-    fence[rail].push(ch);
-    if(rail===0) dir=1; else if(rail===rails-1) dir=-1;
-    rail+=dir;
-  }
+function railPattern(len,rails){
+  const p=[]; if(rails<=1) return new Array(len).fill(0);
+  let r=0,d=1;
+  for(let i=0;i<len;i++){p.push(r);if(r===0)d=1;else if(r===rails-1)d=-1;r+=d;}
+  return p;
+}
+function railFenceEncode(text,keyStr){
+  const rails=parseInt(keyStr,10);
+  if(!Number.isInteger(rails)||rails<2) throw new Error('El número de rieles debe ser un entero de 2 o más.');
+  if(rails>=text.length) return text;
+  const fence=Array.from({length:rails},()=>[]); const p=railPattern(text.length,rails);
+  [...text].forEach((ch,i)=>fence[p[i]].push(ch));
   return fence.map(r=>r.join('')).join('');
 }
-function railFenceDecode(cipher, keyStr){
-  const rails = parseInt(keyStr);
-  if(!rails || rails<2) throw new Error('El número de rieles debe ser un entero de 2 o más.');
-  const len = cipher.length;
-  const pattern=[]; let rail=0, dir=1;
-  for(let i=0;i<len;i++){
-    pattern.push(rail);
-    if(rail===0) dir=1; else if(rail===rails-1) dir=-1;
-    rail+=dir;
-  }
-  const counts = new Array(rails).fill(0);
-  pattern.forEach(r=>counts[r]++);
-  const buckets=[]; let idx=0;
-  for(let r=0;r<rails;r++){ buckets.push(cipher.slice(idx, idx+counts[r]).split('')); idx+=counts[r]; }
-  const pointers = new Array(rails).fill(0);
-  let out='';
-  for(let i=0;i<len;i++){ const r=pattern[i]; out+=buckets[r][pointers[r]++]; }
-  return out;
+function railFenceDecode(cipher,keyStr){
+  const rails=parseInt(keyStr,10);
+  if(!Number.isInteger(rails)||rails<2) throw new Error('El número de rieles debe ser un entero de 2 o más.');
+  if(rails>=cipher.length) return cipher;
+  const chars=[...cipher],p=railPattern(chars.length,rails),counts=Array(rails).fill(0);
+  p.forEach(r=>counts[r]++);
+  const buckets=[];let idx=0;
+  for(let r=0;r<rails;r++){buckets[r]=chars.slice(idx,idx+counts[r]);idx+=counts[r];}
+  const pos=Array(rails).fill(0);
+  return p.map(r=>buckets[r][pos[r]++]).join('');
 }
 
 function keyOrder(key){
-  return [...key].map((ch,i)=>({ch,i})).sort((a,b)=> a.ch.localeCompare(b.ch) || a.i-b.i).map(o=>o.i);
+  return [...key].map((ch,i)=>({ch,i})).sort((a,b)=>a.ch.localeCompare(b.ch,'es')||a.i-b.i).map(o=>o.i);
 }
-function columnarEncode(text, key){
-  key = (key||'').toUpperCase().replace(/[^A-Z]/g,'');
-  if(!key) throw new Error('Se necesita una clave alfabética (solo letras).');
-  const cols = key.length;
-  const rows = Math.ceil(text.length/cols);
-  const padded = text.padEnd(rows*cols, 'X');
-  const order = keyOrder(key);
-  let out='';
-  for(const c of order){ for(let r=0;r<rows;r++){ out+=padded[r*cols+c]; } }
-  return out;
+function columnarEncode(text,key){
+  key=(key||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z]/g,'');
+  if(!key) throw new Error('Se necesita una clave alfabética.');
+  const cols=key.length,order=keyOrder(key),out=[];
+  for(const c of order) for(let r=0;r<Math.ceil(text.length/cols);r++){const i=r*cols+c;if(i<text.length)out.push(text[i]);}
+  return out.join('');
 }
-function columnarDecode(cipher, key){
-  key = (key||'').toUpperCase().replace(/[^A-Z]/g,'');
-  if(!key) throw new Error('Se necesita una clave alfabética (solo letras).');
-  const cols = key.length;
-  if(cipher.length % cols !== 0) throw new Error('La longitud del texto cifrado no es múltiplo del largo de la clave.');
-  const rows = cipher.length/cols;
-  const order = keyOrder(key);
-  const grid = Array.from({length:rows},()=>new Array(cols).fill(''));
-  let idx=0;
-  for(const c of order){ for(let r=0;r<rows;r++){ grid[r][c]=cipher[idx++]; } }
-  let out=''; for(let r=0;r<rows;r++) out+=grid[r].join('');
+function columnarDecode(cipher,key){
+  key=(key||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z]/g,'');
+  if(!key) throw new Error('Se necesita una clave alfabética.');
+  const cols=key.length,n=cipher.length,rows=Math.ceil(n/cols),order=keyOrder(key),shortCols=(cols-(n%cols))%cols;
+  const lens=Array(cols).fill(Math.floor(n/cols));
+  if(n%cols) for(let c=0;c<n%cols;c++) lens[c]++;
+  const grid=Array.from({length:rows},()=>Array(cols).fill('')); let idx=0;
+  for(const c of order){for(let r=0;r<lens[c];r++)grid[r][c]=cipher[idx++];}
+  let out='';for(let r=0;r<rows;r++)for(let c=0;c<cols;c++)if(grid[r][c]!== '')out+=grid[r][c];
   return out;
 }
 
-function escitalaEncode(text, keyStr){
-  const k = parseInt(keyStr);
-  if(!k || k<2) throw new Error('El número de caras del bastón debe ser un entero de 2 o más.');
-  const rows = Math.ceil(text.length/k);
-  const padded = text.padEnd(rows*k, 'X');
-  let out='';
-  for(let c=0;c<k;c++){ for(let r=0;r<rows;r++){ out+=padded[r*k+c]; } }
-  return out;
+/* Escítala: modelo rectangular sin relleno. Es reversible para cualquier longitud. */
+function escitalaEncode(text,keyStr){
+  const k=parseInt(keyStr,10); if(!Number.isInteger(k)||k<2)throw new Error('El número de caras debe ser un entero de 2 o más.');
+  const rows=Math.ceil(text.length/k),out=[];
+  for(let c=0;c<k;c++)for(let r=0;r<rows;r++){const i=r*k+c;if(i<text.length)out.push(text[i]);}
+  return out.join('');
 }
-function escitalaDecode(cipher, keyStr){
-  const k = parseInt(keyStr);
-  if(!k || k<2) throw new Error('El número de caras del bastón debe ser un entero de 2 o más.');
-  const rows = Math.ceil(cipher.length/k);
-  const grid = Array.from({length:rows},()=>new Array(k).fill(''));
-  let idx=0;
-  for(let c=0;c<k;c++){ for(let r=0;r<rows;r++){ grid[r][c]=cipher[idx++]; } }
-  let out=''; for(let r=0;r<rows;r++) out+=grid[r].join('');
-  return out;
+function escitalaDecode(cipher,keyStr){
+  const k=parseInt(keyStr,10); if(!Number.isInteger(k)||k<2)throw new Error('El número de caras debe ser un entero de 2 o más.');
+  const n=cipher.length,rows=Math.ceil(n/k),remainder=n%k;
+  const lens=Array(k).fill(Math.floor(n/k)); if(remainder)for(let c=0;c<remainder;c++)lens[c]++;
+  const cols=Array(k);let idx=0;for(let c=0;c<k;c++){cols[c]=cipher.slice(idx,idx+lens[c]);idx+=lens[c];}
+  const pos=Array(k).fill(0),out=[];
+  for(let r=0;r<rows;r++)for(let c=0;c<k;c++)if(pos[c]<cols[c].length)out.push(cols[c][pos[c]++]);
+  return out.join('');
 }
 
-function xorEncode(text, key){
-  if(!key) throw new Error('Se necesita una clave.');
-  const textBytes = new TextEncoder().encode(text);
-  const keyBytes = new TextEncoder().encode(key);
-  const out = new Uint8Array(textBytes.length);
-  for(let i=0;i<textBytes.length;i++) out[i]=textBytes[i]^keyBytes[i%keyBytes.length];
-  return Array.from(out).map(b=>b.toString(16).padStart(2,'0')).join('');
+function xorKeyBytes(key){
+  if(typeof key==='number') return Uint8Array.of(key&255);
+  const s=String(key??'');
+  if(/^0x[0-9a-f]{1,2}$/i.test(s)) return Uint8Array.of(parseInt(s,16));
+  if(/^\d{1,3}$/.test(s) && Number(s)<=255) return Uint8Array.of(Number(s));
+  const b=new TextEncoder().encode(s); if(!b.length)throw new Error('Se necesita una clave.'); return b;
 }
-function xorDecode(hexCipher, key){
-  if(!key) throw new Error('Se necesita una clave.');
-  const clean = hexCipher.replace(/\s+/g,'');
-  if(!clean.length || clean.length%2!==0 || /[^0-9a-fA-F]/.test(clean)) throw new Error('El texto cifrado XOR debe estar en hexadecimal.');
-  const bytes=[]; for(let i=0;i<clean.length;i+=2) bytes.push(parseInt(clean.substr(i,2),16));
-  const keyBytes = new TextEncoder().encode(key);
-  const out = new Uint8Array(bytes.length);
-  for(let i=0;i<bytes.length;i++) out[i]=bytes[i]^keyBytes[i%keyBytes.length];
-  return new TextDecoder().decode(out);
+function xorEncode(text,key){
+  const textBytes=new TextEncoder().encode(text),keyBytes=xorKeyBytes(key),out=new Uint8Array(textBytes.length);
+  for(let i=0;i<out.length;i++)out[i]=textBytes[i]^keyBytes[i%keyBytes.length];
+  return Array.from(out,b=>b.toString(16).padStart(2,'0')).join('');
+}
+function xorDecode(hexCipher,key){
+  const clean=String(hexCipher).replace(/\s+/g,'');
+  if(!clean.length||clean.length%2||/[^0-9a-fA-F]/.test(clean))throw new Error('El texto cifrado XOR debe estar en hexadecimal.');
+  const bytes=Uint8Array.from({length:clean.length/2},(_,i)=>parseInt(clean.slice(i*2,i*2+2),16));
+  const keyBytes=xorKeyBytes(key),out=new Uint8Array(bytes.length);
+  for(let i=0;i<out.length;i++)out[i]=bytes[i]^keyBytes[i%keyBytes.length];
+  try{return new TextDecoder('utf-8',{fatal:true}).decode(out);}catch(e){return Array.from(out,b=>b.toString(16).padStart(2,'0')).join(' ');}
 }
 
-const POLY_GRID = ['ABCDE','FGHIK','LMNOP','QRSTU','VWXYZ'];
+const POLY_GRID=['ABCDE','FGHIK','LMNOP','QRSTU','VWXYZ'];
 function polybioEncode(text){
-  const map={};
-  for(let r=0;r<5;r++) for(let c=0;c<5;c++) map[POLY_GRID[r][c]] = `${r+1}${c+1}`;
-  const out = text.toUpperCase().replace(/J/g,'I').split('').map(ch=>{
-    if(ch===' ') return '/';
-    if(map[ch]) return map[ch];
-    return null;
-  }).filter(x=>x!==null);
-  if(!out.length) throw new Error('No hay letras A-Z compatibles con Polybio en el texto.');
+  const map={};for(let r=0;r<5;r++)for(let c=0;c<5;c++)map[POLY_GRID[r][c]]=`${r+1}${c+1}`;
+  const out=[];
+  for(const ch of text.normalize('NFD').replace(/[\u0300-\u036f]/g,'' ).toUpperCase()){
+    if(/\s/.test(ch)){out.push('/');continue;}
+    const c=ch==='J'?'I':ch;if(!map[c])throw new Error(`Carácter no compatible con Polybio: ${ch}`);out.push(map[c]);
+  }
   return out.join(' ');
 }
 function polybioDecode(code){
-  const tokens = code.trim().split(/\s+/);
-  let out='';
-  for(const t of tokens){
-    if(t==='/'){ out+=' '; continue; }
-    if(t.length!==2 || isNaN(t)){ out+='?'; continue; }
-    const r=parseInt(t[0])-1, c=parseInt(t[1])-1;
-    out += (r>=0&&r<5&&c>=0&&c<5) ? POLY_GRID[r][c] : '?';
-  }
+  const tokens=code.trim().split(/\s+/);let out='';
+  for(const t of tokens){if(t==='/'){out+=' ';continue;}if(!/^([1-5])([1-5])$/.test(t))throw new Error(`Coordenada Polybio inválida: ${t}`);out+=POLY_GRID[+t[0]-1][+t[1]-1];}
   return out;
 }
 
-/* Diccionario para puntuar fuerza bruta del César */
-const PALABRAS_COMUNES = ["que","de","la","el","en","y","a","los","se","del","las","un","por","con","no","una","su","para","es","al","lo","como","mas","pero","sus","le","ya","o","este","si","porque","esta","entre","cuando","muy","sin","sobre","tambien","me","hasta","hay","donde","quien","desde","todo","nos","durante","todos","uno","les","ni","contra","otros","ese","eso","ante","ellos","esto","mi","antes","algunos","unos","yo","otro","otras","otra","tanto","esa","estos","mucho","quienes","nada","muchos","cual","poco","ella","estar","estas","algunas","algo","nosotros"];
+/* ============================= PUNTUACIÓN EN ESPAÑOL ============================= */
+const PALABRAS_COMUNES = new Set(`que de la el en y a los se del las un por con no una su para es al lo como más pero sus le ya o este sí porque esta entre cuando muy sin sobre también me hasta hay donde quien desde todo nos durante todos uno les ni contra otros ese eso esto mi antes algunos unos yo otro otras tanto esa estos mucho nada muchos cual poco ella estar estas algo nosotros nuestro vida casa gente cosa día trabajo lugar verdad mundo nombre parte amigo hora dinero madre padre chico chica mensaje secreto texto palabra código clave cifrado descifrar ahora nunca siempre aquí allí bien bueno mejor`.toLowerCase().split(/\s+/));
+const NGRAM_ES=['que','ent','los','las','del','est','ado','ada','con','por','para','una','ion','era','res','sta','nte','aci','ció','men','com','omo','est','tra','ría','ado'];
+let diccionarioEspanol=new Set(PALABRAS_COMUNES);
+let diccionarioCargado=false;
+async function cargarDiccionarioEspanol(){
+  try{
+    const url='https://raw.githubusercontent.com/mazyvan/most-common-spanish-words/master/most-common-spanish-words-v5.txt';
+    const r=await fetch(url,{cache:'force-cache'}); if(!r.ok)throw new Error('HTTP '+r.status);
+    const txt=await r.text();
+    for(const w of txt.split(/\r?\n/)){const n=w.trim().toLowerCase();if(/^[a-záéíóúüñ]{2,}$/.test(n))diccionarioEspanol.add(n.normalize('NFC'));}
+    diccionarioCargado=true;
+    showToast(`[DICCIONARIO]: ${diccionarioEspanol.size.toLocaleString('es-AR')} palabras cargadas`);
+  }catch(e){ diccionarioCargado=false; }
+}
+function normalizarParaPuntuar(texto){return texto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}
 function puntuarTexto(texto){
-  const palabras = texto.toLowerCase().match(/[a-záéíóúñ]+/g) || [];
-  let puntos = 0;
-  for(const p of palabras) if(PALABRAS_COMUNES.includes(p)) puntos++;
+  const raw=texto.toLowerCase().normalize('NFC');
+  const palabras=raw.match(/[a-záéíóúüñ]{1,}/gi)||[];
+  let puntos=0, usadas=0;
+  for(const p0 of palabras){
+    const p=p0.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    if(p.length>=2 && diccionarioEspanol.has(p)){puntos += p.length>=7?8:p.length>=5?5:p.length>=3?3:1;usadas++;}
+  }
+  const compact=normalizarParaPuntuar(texto);
+  for(const ng of NGRAM_ES) { let pos=0; while((pos=compact.indexOf(ng,pos))!==-1){puntos+=0.35;pos+=ng.length;} }
+  const spaces=(texto.match(/\s+/g)||[]).length;
+  if(usadas>=2)puntos+=usadas*1.5;
+  if(spaces>0)puntos+=Math.min(spaces,10)*0.5;
   return puntos;
 }
 
@@ -870,10 +917,10 @@ const CATEGORIES = [
 
 const CIPHERS = [
   { id:'cesar', name:'CÉSAR', category:'sub',
-    desc:'Desplaza cada letra N posiciones en el alfabeto.',
+    desc:'Desplaza cada letra N posiciones en el alfabeto español, incluyendo Ñ.',
     keyType:'number', keyLabel:'DESPLAZAMIENTO (1-25)', keyPlaceholder:'ej: 3', keyDefault:'3',
-    brute:true, bruteLabel:'k', bruteRange:()=>[1,25],
-    hint:'Tip: si no sabés la clave, activá FUERZA_BRUTA para probar los 25 desplazamientos posibles sin escribir ninguna.',
+    brute:true, bruteLabel:'k', bruteRange:()=>[0,26],
+    hint:'Tip: si no sabés la clave, activá FUERZA_BRUTA para probar todos los desplazamientos posibles.',
     encode:(t,k)=>caesarText(t, parseInt(k)||0),
     decode:(t,k)=>caesarText(t, -(parseInt(k)||0)) },
 
@@ -887,7 +934,7 @@ const CIPHERS = [
     desc:'Caso especial del César con desplazamiento fijo de 13.',
     keyType:null,
     hint:'No necesita clave: aplicar ROT13 dos veces devuelve el texto original.',
-    encode:(t)=>caesarText(t,13), decode:(t)=>caesarText(t,13) },
+    encode:(t)=>rot13Text(t), decode:(t)=>rot13Text(t) },
 
   { id:'railfence', name:'RAIL FENCE', category:'trans',
     desc:'Escribe el texto en zigzag sobre N rieles y lo lee por filas.',
@@ -899,14 +946,14 @@ const CIPHERS = [
   { id:'columnar', name:'COLUMNAR', category:'trans',
     desc:'Ordena el texto en columnas según el orden alfabético de una clave.',
     keyType:'text', keyLabel:'CLAVE (letras)', keyPlaceholder:'ej: CLAVE',
-    hint:'El texto puede quedar con "X" de relleno al final si no completa el rectángulo. No admite fuerza bruta práctica (la clave es libre).',
+    hint:'Transposición por columnas con clave alfabética. Conserva la longitud original y admite claves repetidas.',
     encode:columnarEncode, decode:columnarDecode },
 
   { id:'escitala', name:'ESCÍTALA', category:'trans',
     desc:'Simula el bastón espartano: transpone el texto según su número de caras.',
     keyType:'number', keyLabel:'NÚMERO DE CARAS', keyPlaceholder:'ej: 4', keyDefault:'4',
     brute:true, bruteLabel:'caras', bruteRange:(t)=>[2, Math.max(2, Math.min(12, t.length-1))],
-    hint:'Tip: si no sabés el diámetro del bastón, activá FUERZA_BRUTA en vez de adivinar el número.',
+    hint:'Modelo rectangular reversible de Escítala. Si no sabés las caras, activá FUERZA_BRUTA.',
     encode:escitalaEncode, decode:escitalaDecode },
 
   { id:'base64', name:'BASE64', category:'enc',
@@ -924,25 +971,26 @@ const CIPHERS = [
   { id:'morse', name:'MORSE', category:'enc',
     desc:'Traduce letras y números a puntos y rayas.',
     keyType:null,
-    hint:'Usá "/" para separar palabras. No soporta letras acentuadas ni ñ.',
+    hint:'Usá "/" para separar palabras. Admite Ñ y signos Morse comunes.',
     encode:morseEncode, decode:morseDecode },
 
   { id:'vigenere', name:'VIGENÈRE', category:'key',
     desc:'Cifrado polialfabético: cada letra se desplaza según una clave repetida.',
     keyType:'text', keyLabel:'CLAVE (letras)', keyPlaceholder:'ej: CLAVE',
-    hint:'La clave se repite letra por letra a lo largo del texto. No admite fuerza bruta práctica (la clave es libre).',
+    hint:'La clave se repite letra por letra. La fuerza bruta completa no es viable cuando la clave puede tener cualquier longitud.',
     encode:(t,k)=>vigenere(t,k,false), decode:(t,k)=>vigenere(t,k,true) },
 
   { id:'xor', name:'XOR SIMPLE', category:'key',
     desc:'Aplica XOR byte a byte con una clave repetida. Resultado en hexadecimal.',
     keyType:'text', keyLabel:'CLAVE', keyPlaceholder:'ej: clave123',
-    hint:'Al cifrar, el resultado se muestra en hexadecimal. Al descifrar, pegá ese hexadecimal. No admite fuerza bruta práctica (la clave es libre).',
+    brute:true, bruteLabel:'byte', bruteRange:()=>[0,255],
+    hint:'La clave puede ser texto o un byte 0-255. En fuerza bruta se prueban las 256 claves de un byte.',
     encode:xorEncode, decode:xorDecode },
 
   { id:'polybio', name:'POLYBIO', category:'key',
     desc:'Cuadrícula 5x5 (I/J combinadas): cada letra se vuelve un par fila-columna.',
     keyType:null,
-    hint:'Sin clave: usa una cuadrícula fija de 5x5. Los pares de dígitos van separados por espacio.',
+    hint:'Sin clave: cuadrícula 5x5 con I/J combinadas. Las palabras se separan con /.',
     encode:polybioEncode, decode:polybioDecode },
 ];
 
@@ -1030,7 +1078,7 @@ function renderControls(){
   if(state.cipherId === 'ALL'){
     $('cipherName').textContent = '[PROBAR TODOS LOS MÉTODOS]';
     $('cipherDesc').textContent = '12 cifrados en un solo análisis';
-    $('cipherHint').textContent = 'Corre los 12 métodos sobre el texto de entrada y resalta el candidato más probable. Vigenère, XOR y Columnar se omiten porque su clave es libre.';
+    $('cipherHint').textContent = 'Corre los 12 métodos sobre el texto de entrada y resalta el candidato más probable. Vigenère y Columnar requieren una clave manual; XOR se prueba con sus 256 claves de un byte.';
     placeholder.style.display = 'none';
     toggleLine.style.display = 'none';
     keyRow.style.display = 'none';
@@ -1060,7 +1108,7 @@ function renderControls(){
     b.classList.toggle('active', b.dataset.mode===state.mode);
   });
 
-  // fuerza bruta (César, Rail Fence, Escítala) — junto al campo de clave
+  // fuerza bruta (César, Rail Fence, Escítala y XOR) — junto al campo de clave
   const bruteField = $('bruteField');
   const bruteBtn = $('bruteToggle');
   if(c.brute){
